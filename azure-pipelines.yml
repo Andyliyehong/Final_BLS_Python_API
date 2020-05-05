@@ -1,0 +1,72 @@
+trigger:
+- master
+- development
+
+resources:
+- repo: self
+
+variables:
+  registry: 'ue2padvaiwacr32.azurecr.io'
+  repository: 'data-ingestion'
+  tag: '$(Build.BuildId)'
+
+stages:
+- stage: Build
+  displayName: Build
+  jobs:  
+  - job: Build
+    displayName: Build
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: Docker@2
+      displayName: 'Login to ACR'
+      inputs:
+        command: login
+        containerRegistry: ue2padvaiwacr32
+    - task: Docker@2
+      displayName: 'Building Docker image'
+      inputs:
+        command: build
+        arguments: '-t $(registry)/$(repository):$(tag)'
+        dockerfile: '$(Build.SourcesDirectory)/data-ingestion/Dockerfile'
+        repository: $(repository)
+        tags: $(tag)
+    - task: Docker@2
+      displayName: 'Testing Docker image'
+      inputs:
+        command: run
+        arguments: |
+          -v $(Build.SourcesDirectory)/data-ingestion/test-results/:/home/test-results
+          --entrypoint /home/run_tests.sh $(registry)/$(repository):$(tag)
+    - task: PublishTestResults@2
+      condition: succeededOrFailed()
+      inputs:
+        testResultsFiles: '**/test-*.xml'
+        testRunTitle: 'Publish test results'
+    - task: PublishCodeCoverageResults@1
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+        reportDirectory: '$(System.DefaultWorkingDirectory)/**/htmlcov'
+    - task: Docker@2
+      displayName: 'Pushing image to ACR'
+      inputs:
+        command: push
+        containerRegistry: ue2padvaiwacr32
+        repository: $(repository)
+        tags: $(tag)
+  - job: Publish
+    displayName: 'Upload Kubernetes deployment files'
+    pool:
+      vmImage: 'ubuntu-latest'
+    steps:
+    - task: ArchiveFiles@2
+      displayName: 'Archive $(Build.SourcesDirectory)/k8s'
+      inputs:
+        rootFolderOrFile: '$(Build.SourcesDirectory)/k8s'
+    - task: PublishBuildArtifacts@1
+      displayName: 'Publish artifacts'
+      inputs:
+        pathToPublish: '$(Build.ArtifactStagingDirectory)'
+        artifactName: '$(Build.BuildId)'
